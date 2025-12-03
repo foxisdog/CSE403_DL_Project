@@ -16,7 +16,7 @@ import math
 
 # --- Setup & Configuration ---
 NUM_ROWS_TO_USE = 10
-MAX_SENTENCES_PER_DOC = 40  # Limit to avoid context window issues
+MAX_SENTENCES_PER_DOC = 20  # Reduced to minimize memory even further
 
 # 1. Login
 hf_token = ""
@@ -61,7 +61,7 @@ pipe = pipeline(
     tokenizer=tokenizer,
     device_map="auto",
     pad_token_id=tokenizer.eos_token_id,
-    batch_size=8  # Smaller batch for longer prompts
+    batch_size=1  # Reduced batch size to 1 to reduce memory footprint
 )
 
 # NLTK Setup
@@ -218,7 +218,7 @@ def print_mismatch_statistics():
     print(f"SENTENCE COUNT MISMATCH STATISTICS")
     print(f"{'='*60}")
     print(f"Total Documents Processed: {stats['total_docs']}")
-    print(f"Mismatches: {stats['mismatches']} ({stats['mismatches']/max(stats['total_docs'],1)*100:.1f}%)")
+    print(f"Mismatches: {stats['mismatches']} ({stats['mismatches']/max(stats['total_docs'],1)*100:.1f}%%)")
     print(f"  - Too Few Sentences: {stats['too_few']}")
     print(f"  - Too Many Sentences: {stats['too_many']}")
     print(f"{'='*60}")
@@ -546,7 +546,11 @@ def train_advanced_model(X_train, y_train, X_val, y_val):
     print("\n=== Advanced Training Pipeline ===")
 
     input_dim = X_train.shape[1]
-    model = AdvancedArtifactDetectorMLP(input_dim=input_dim, hidden_dims=[1024, 512, 256, 128], dropout=0.4).to(device)
+    model = AdvancedArtifactDetectorMLP(
+        input_dim=input_dim,
+        hidden_dims=[1024, 512, 256, 128],
+        dropout=0.4
+    ).to(device)
 
     criterion = FocalLoss(alpha=0.25, gamma=2.0)
     optimizer = optim.AdamW(model.parameters(), lr=0.001, betas=(0.9, 0.999), weight_decay=0.01, eps=1e-8)
@@ -590,7 +594,7 @@ def train_advanced_model(X_train, y_train, X_val, y_val):
 
             progress_bar.set_postfix({
                 'loss': f'{loss.item():.4f}',
-                'acc': f'{100 * train_correct / train_total:.2f}%',
+                'acc': f'{100 * train_correct / train_total:.2f}%%',
                 'lr': f'{optimizer.param_groups[0]["lr"]:.6f}'
             })
 
@@ -608,8 +612,8 @@ def train_advanced_model(X_train, y_train, X_val, y_val):
         current_lr = optimizer.param_groups[0]['lr']
 
         print(f"Epoch [{epoch+1}/{epochs}] | "
-              f"Train Loss: {avg_train_loss:.4f} | Train Acc: {train_acc:.2f}% | "
-              f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}% | "
+              f"Train Loss: {avg_train_loss:.4f} | Train Acc: {train_acc:.2f}%% | "
+              f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}%% | "
               f"LR: {current_lr:.6f}")
 
         if val_acc > best_val_acc:
@@ -621,7 +625,7 @@ def train_advanced_model(X_train, y_train, X_val, y_val):
                 'val_acc': val_acc,
                 'train_acc': train_acc
             }, "best_model_document_level.pth")
-            print(f"  ✓ New best model saved! (Val Acc: {val_acc:.2f}%)")
+            print(f"  ✓ New best model saved! (Val Acc: {val_acc:.2f}%%)")
             patience_counter = 0
         else:
             patience_counter += 1
@@ -630,7 +634,7 @@ def train_advanced_model(X_train, y_train, X_val, y_val):
                 break
 
     print(f"\n{'='*50}")
-    print(f"Training Complete! Best Validation Accuracy: {best_val_acc:.2f}%")
+    print(f"Training Complete! Best Validation Accuracy: {best_val_acc:.2f}%%")
     print(f"{'='*50}\n")
 
     checkpoint = torch.load("best_model_document_level.pth", weights_only=False)
@@ -730,7 +734,7 @@ def main():
 
     doc_acc = (correct_docs / total_docs) * 100
     print(f"\n{'-'*40}")
-    print(f"FINAL DOCUMENT ACCURACY (Document-Level + MC Dropout): {doc_acc:.2f}%")
+    print(f"FINAL DOCUMENT ACCURACY (Document-Level + MC Dropout): {doc_acc:.2f}%%")
     print(f"Correct: {correct_docs} / {total_docs}")
     print(f"{'-'*40}")
 
