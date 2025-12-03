@@ -17,6 +17,7 @@ import math
 
 # --- Setup & Configuration ---
 NUM_ROWS_TO_USE = 10  # Strict limit: Process exactly this many rows (e.g., 100 rows -> 200 samples)
+MAX_SENTENCES_PER_DOC = 20 # Limit sentences per document to reduce memory usage during LLM inference
 
 # 1. Login
 hf_token = ""
@@ -64,7 +65,7 @@ pipe = pipeline(
     tokenizer=tokenizer,
     device_map="auto",
     pad_token_id=tokenizer.eos_token_id,
-    batch_size=32
+    batch_size=8 # Changed batch size back to 8 as requested
 )
 
 # NLTK Setup
@@ -126,15 +127,6 @@ class AdvancedArtifactDetectorMLP(nn.Module):
             nn.Dropout(dropout)
         )
 
-        # Self-attention layer for feature weighting
-        self.attention = nn.Sequential(
-            nn.Linear(hidden_dims[0], hidden_dims[0] // 4),
-            nn.Tanh(),
-            nn.Linear(hidden_dims[0] // 4, hidden_dims[0]),
-            nn.Sigmoid()
-        )
-
-        # Deep layers with residual connections
         self.layer1 = nn.Sequential(
             nn.Linear(hidden_dims[0], hidden_dims[1]),
             nn.BatchNorm1d(hidden_dims[1]),
@@ -154,6 +146,14 @@ class AdvancedArtifactDetectorMLP(nn.Module):
             nn.BatchNorm1d(hidden_dims[3]),
             nn.ReLU(),
             nn.Dropout(dropout * 0.4)
+        )
+
+        # Self-attention layer for feature weighting
+        self.attention = nn.Sequential(
+            nn.Linear(hidden_dims[0], hidden_dims[0] // 4),
+            nn.Tanh(),
+            nn.Linear(hidden_dims[0] // 4, hidden_dims[0]),
+            nn.Sigmoid()
         )
 
         # Final classification layer
@@ -280,7 +280,7 @@ def run_transformation_pipeline(texts, mode, description="Transforming", doc_con
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": prompt}
         ])
-    ]
+
 
     def input_generator():
         for item in chat_inputs:
@@ -290,7 +290,7 @@ def run_transformation_pipeline(texts, mode, description="Transforming", doc_con
 
     pipeline_iterator = pipe(
         input_generator(),
-        batch_size=32,
+        batch_size=8, # Changed batch size to 8 as requested
         max_new_tokens=64,
         do_sample=False
     )
@@ -390,12 +390,15 @@ def create_sentence_dataset(documents, desc_prefix=""):
 
     all_sentences = []
     all_labels = []
-    doc_contexts = []  # Store (full_doc_text, sentence_index) for each sentence
+    doc_contexts = []  # Store (full_doc_text, sent_start_idx, sent_end_idx) for each sentence
 
     # 1. Extract Sentences & Inherit Labels + Build Context Info
     for text, label in documents:
         sents = get_sentences(text)
         if not sents: continue
+
+        # Limit sentences per document for memory management
+        sents = sents[:MAX_SENTENCES_PER_DOC]
 
         # For each sentence, store the full document text for context
         for sent_idx, sent in enumerate(sents):
@@ -416,7 +419,7 @@ def create_sentence_dataset(documents, desc_prefix=""):
 
     # CRITICAL: Verify sentence count is preserved
     assert len(reduced_sentences) == len(all_sentences), \
-        f"[ERROR] Sentence count mismatch after reduce: {len(all_sentences)} → {len(reduced_sentences)}"
+        f"[ERROR] Sentence count mismatch after reduce: {len(all_sentences)} \u2192 {len(reduced_sentences)}"
 
     # For inject, we can reuse the same contexts (reduced sentences still belong to same docs)
     injected_sentences = run_transformation_pipeline(
@@ -428,9 +431,9 @@ def create_sentence_dataset(documents, desc_prefix=""):
 
     # CRITICAL: Verify sentence count is preserved
     assert len(injected_sentences) == len(reduced_sentences), \
-        f"[ERROR] Sentence count mismatch after inject: {len(reduced_sentences)} → {len(injected_sentences)}"
+        f"[ERROR] Sentence count mismatch after inject: {len(reduced_sentences)} \u2192 {len(injected_sentences)}"
 
-    print(f"[{desc_prefix}] ✓ Sentence count preserved: {len(all_sentences)} → {len(reduced_sentences)} → {len(injected_sentences)}")
+    print(f"[{desc_prefix}] \u2713 Sentence count preserved: {len(all_sentences)} \u2192 {len(reduced_sentences)} \u2192 {len(injected_sentences)}")
 
     # 3. Feature Extraction (Embeddings)
     print(f"[{desc_prefix}] Calculating Sentence Embeddings...")
@@ -639,7 +642,7 @@ def train_advanced_model(X_train, y_train, X_val, y_val):
                 'val_acc': val_acc,
                 'train_acc': train_acc
             }, "best_model.pth")
-            print(f"  ✓ New best model saved! (Val Acc: {val_acc:.2f}%)")
+            print(f"  \u2713 New best model saved! (Val Acc: {val_acc:.2f}%)")
             patience_counter = 0
         else:
             patience_counter += 1
@@ -650,7 +653,7 @@ def train_advanced_model(X_train, y_train, X_val, y_val):
     print(f"\n{'='*50}")
     print(f"Training Complete!")
     print(f"Best Validation Accuracy: {best_val_acc:.2f}%")
-    print(f"{'='*50}\n")
+    print(f"{'-'*50}\n")
 
     # Load best model
     checkpoint = torch.load("best_model.pth", weights_only=False)
@@ -674,6 +677,9 @@ def predict_essay(essay_text, mlp_model, num_mc_samples=5):
     sentences = get_sentences(essay_text)
     if not sentences:
         return 0.5, "Uncertain"
+
+    # Limit sentences per document for memory management
+    sentences = sentences[:MAX_SENTENCES_PER_DOC]
 
     # 2. Prepare document context for each sentence
     doc_contexts = [(essay_text, i) for i in range(len(sentences))]
@@ -699,7 +705,10 @@ def predict_essay(essay_text, mlp_model, num_mc_samples=5):
         features = torch.cat((emb_o, emb_i), dim=1)
 
     # 4. Monte Carlo Dropout inference for better predictions
-    mlp_model.train()  # Enable dropout for MC sampling
+    mlp_model.eval() # Set model to evaluation mode to handle BatchNorm1d correctly with batch_size=1
+    for module in mlp_model.modules():
+        if isinstance(module, nn.Dropout):
+            module.train() # Re-enable dropout for Monte Carlo sampling
 
     mc_predictions = []
     with torch.no_grad():
