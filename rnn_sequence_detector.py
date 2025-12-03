@@ -1,21 +1,3 @@
-"""
-Sequence-Aware Artifact Detector using RNN/LSTM
-
-Core Idea:
-Instead of voting on individual sentences, this system learns the "rhythm" and
-"flow" of how sentences change through transformations. AI text exhibits a
-"metronome effect" (consistent, predictable changes), while human text shows
-"jazz-like" variability (irregular, unpredictable patterns).
-
-Architecture:
-- Input: Pairs of [Original, Transformed] sentence embeddings across a sequence
-- Model: Bidirectional LSTM (Many-to-One)
-- Output: Document-level classification (AI vs Human)
-
-Key Innovation:
-Sliding Window approach to create sufficient training samples from limited documents.
-"""
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -504,7 +486,7 @@ def process_documents_to_sequences(documents, desc_prefix=""):
 # Training Functions
 # ========================================
 
-def train_model(train_loader, val_loader, embedding_dim, epochs=50, lr=0.001):
+def train_model(train_loader, val_loader, embedding_dim, epochs=50, lr=0.001, hidden_dim=256, num_layers=2, dropout=0.3):
     """
     Train the RNN-based sequence detector.
 
@@ -514,6 +496,9 @@ def train_model(train_loader, val_loader, embedding_dim, epochs=50, lr=0.001):
         embedding_dim: Dimension of embeddings
         epochs: Number of training epochs
         lr: Learning rate
+        hidden_dim: Hidden dimension for LSTM
+        num_layers: Number of LSTM layers
+        dropout: Dropout rate for LSTM and classifier
 
     Returns:
         Trained model
@@ -523,9 +508,9 @@ def train_model(train_loader, val_loader, embedding_dim, epochs=50, lr=0.001):
     # Initialize model
     model = SequenceArtifactDetector(
         embedding_dim=embedding_dim,
-        hidden_dim=256,
-        num_layers=2,
-        dropout=0.3
+        hidden_dim=hidden_dim,
+        num_layers=num_layers,
+        dropout=dropout
     ).to(device)
 
     # Loss and optimizer
@@ -622,8 +607,8 @@ def train_model(train_loader, val_loader, embedding_dim, epochs=50, lr=0.001):
 
     print(f"\n{'='*50}")
     print(f"Training complete!")
-    print(f"Best validation accuracy: {best_val_acc:.2f}%")
-    print(f"{'='*50}\n")
+    print(f"Best validation accuracy: {best_val_acc:.2f}% precious")
+    print(f"{'-'*50}\n")
 
     # Load best model
     checkpoint = torch.load("best_rnn_model.pth", weights_only=False)
@@ -744,7 +729,18 @@ def main():
 
     # 6. Train model
     embedding_dim = llm_model.config.hidden_size
-    model = train_model(train_loader, val_loader, embedding_dim, epochs=50, lr=0.001)
+    # Recommended model sizes
+    recommended_hidden_dim = 128 # Smaller RNN
+    recommended_num_layers = 1 # Shallower RNN
+    recommended_dropout = 0.4
+
+    model = train_model(
+        train_loader, val_loader, embedding_dim,
+        epochs=50, lr=0.001,
+        hidden_dim=recommended_hidden_dim,
+        num_layers=recommended_num_layers,
+        dropout=recommended_dropout
+    )
 
     # 7. Evaluate on test set (document level)
     print("\n--- Evaluating on Test Documents ---")
